@@ -1,0 +1,29 @@
+{
+  "name": "speed-enterprises",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "description": "Multi-tenant white-label operations platform for local trade businesses",
+  "scripts": {
+    "dev":         "pnpm -r --parallel --filter './apps/*' dev",
+    "dev:api":     "pnpm --filter @speed-enterprises/api dev",
+    "dev:web":     "pnpm --filter @speed-enterprises/web dev",
+    "build":       "pnpm -r --filter './packages/*' build && pnpm -r --filter './apps/*' build",
+    "build:shared":"pnpm --filter @speed-enterprises/shared build",
+    "lint":        "pnpm -r --filter './apps/*' lint",
+    "typecheck":   "pnpm -r --parallel typecheck",
+    "test":        "pnpm -r --parallel test",
+    "db:up":       "docker compose up -d db",
+    "db:down":     "docker compose down",
+    "db:reset":    "docker compose down -v && docker compose up -d db",
+    "prisma:migrate": "pnpm --filter @speed-enterprises/api prisma migrate dev",
+    "prisma:generate":"pnpm --filter @speed-enterprises/api prisma generate",
+    "prisma:studio":  "pnpm --filter @speed-enterprises/api prisma studio",
+    "seed":        "pnpm --filter @speed-enterprises/api db:seed",
+    "fresh":       "pnpm db:reset && sleep 3 && pnpm prisma:migrate && pnpm seed",
+    "clean":       "pnpm -r --filter './apps/*' clean && rm -rf packages/shared/dist packages/shared/.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

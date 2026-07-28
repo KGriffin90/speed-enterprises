@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Default tokens — overridden per-tenant by <style> injection in layout.tsx ── */
+:root {
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-400: #818cf8;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+  --brand-900: #1e1b4b;
+  --accent:    #f59e0b;
+  --on-brand:  #ffffff;
+  --ink-900: #1c1917;
+  --ink-700: #44403c;
+  --ink-500: #78716c;
+  --ink-300: #a8a29e;
+  --surface-0:   #ffffff;
+  --surface-50:  #fafaf9;
+  --surface-100: #f5f5f4;
+  --surface-200: #e7e5e4;
+  --font-brand:  system-ui, -apple-system, sans-serif;
+  --brand-radius: 0.75rem;
+  color-scheme: light;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────
+ * Toggled by ThemeToggle, which sets data-theme="dark" on <html>. Only the
+ * neutral surface/ink ramps flip; the tenant's brand colors (injected inline in
+ * layout.tsx) stay branded. Surface/ink must come from CSS (not inline) for this
+ * override to win — see lib/theme.ts. */
+:root[data-theme='dark'] {
+  --ink-900: #fafaf9;
+  --ink-800: #f0eeec;
+  --ink-700: #e7e5e4;
+  --ink-600: #c4bfba;
+  --ink-500: #a8a29e;
+  --ink-400: #8c867f;
+  --ink-300: #78716c;
+  --ink-200: #57534e;
+  --surface-0:   #1c1917;
+  --surface-50:  #0c0a09;
+  --surface-100: #292524;
+  --surface-200: #3f3a36;
+  --surface-300: #57534e;
+  color-scheme: dark;
+}
+
+html, body {
+  background: var(--surface-50);
+  color:      var(--ink-900);
+  font-family: var(--font-brand);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 px-5 py-3 font-semibold transition-all shadow-soft;
+  background-color: var(--brand-500);
+  color: var(--on-brand);
+  border-radius: var(--brand-radius);
+}
+.btn-primary:hover  { background-color: var(--brand-600); transform: translateY(-1px); box-shadow: 0 4px 24px color-mix(in srgb, var(--brand-500) 35%, transparent); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center gap-2 px-5 py-3 font-semibold transition-all;
+  background-color: var(--surface-0);
+  color: var(--ink-900);
+  border: 1.5px solid var(--surface-200);
+  border-radius: var(--brand-radius);
+}
+.btn-secondary:hover { background-color: var(--surface-50); border-color: var(--surface-200); transform: translateY(-1px); }
+
+.btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2 font-medium transition-all rounded-lg text-sm;
+  color: var(--ink-700);
+}
+.btn-ghost:hover { background-color: var(--surface-100); color: var(--ink-900); }
+
+/* ── Inputs ──────────────────────────────────────────────────────────── */
+.input {
+  @apply w-full px-4 py-3 outline-none transition-all;
+  background-color: var(--surface-0);
+  color: var(--ink-900);
+  border: 1.5px solid var(--surface-200);
+  border-radius: var(--brand-radius);
+}
+.input:focus {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-500) 15%, transparent);
+}
+.input::placeholder { color: var(--ink-300); }
+
+.label { @apply block text-sm font-medium mb-1.5; color: var(--ink-700); }
+.help  { @apply text-xs mt-1.5; color: var(--ink-500); }
+
+/* ── Cards ───────────────────────────────────────────────────────────── */
+.card {
+  background-color: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: var(--brand-radius);
+  @apply shadow-soft;
+}
+
+.card-hover {
+  background-color: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: var(--brand-radius);
+  @apply shadow-soft transition-all;
+}
+.card-hover:hover {
+  border-color: color-mix(in srgb, var(--brand-500) 40%, var(--surface-200));
+  box-shadow: 0 8px 40px color-mix(in srgb, var(--brand-500) 12%, rgba(0,0,0,0.08));
+  transform: translateY(-2px);
+}
+
+/* ── Links ───────────────────────────────────────────────────────────── */
+.link { color: var(--brand-600); text-decoration: none; }
+.link:hover { text-decoration: underline; }
+
+/* ── Section containers ──────────────────────────────────────────────── */
+.section { @apply max-w-6xl mx-auto px-6; }
+
+/* ── Hero gradient ───────────────────────────────────────────────────── */
+/*
+ * Three-layer background stack (top → bottom):
+ *   1. Brand radial spot    — semi-transparent accent glow
+ *   2. Surface wash         — left-strong (~82 %) fading right (~44 %) so the
+ *                             photo/video reads clearly on the right while the
+ *                             headline copy on the left stays legible
+ *   3. --hero-image         — AI-generated trade photo; falls back to `none`
+ *                             (solid surface-0) when not set
+ *
+ * Set  style="--hero-image: url('…')"  on the section to inject the photo.
+ * NOTE: keep this wash in sync with the inline video overlay in page.tsx.
+ */
+.hero-gradient {
+  background-color: var(--surface-0);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 60% -10%, color-mix(in srgb, var(--brand-500) 18%, transparent) 0%, transparent 70%),
+    linear-gradient(100deg, color-mix(in srgb, var(--surface-0) 82%, transparent) 0%, color-mix(in srgb, var(--surface-0) 68%, transparent) 48%, color-mix(in srgb, var(--surface-0) 44%, transparent) 100%),
+    var(--hero-image, none);
+  background-size: auto, auto, cover;
+  background-position: center, center, center;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+}
+
+/* Hero media layer (rotating video or stills). Respect users who ask for less
+   motion: hide the autoplaying media so the static washed --hero-image (the
+   section background) shows instead. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-media { display: none; }
+}
+
+/* Slow zoom + pan for hero stills (HeroImageRotator) so the rotation reads like
+   aerial drone footage. The base scale keeps the frame filled through the drift
+   so no edges are exposed. Only runs inside .hero-media, which is hidden under
+   prefers-reduced-motion. */
+@keyframes heroPan {
+  from { transform: scale(1.08) translate3d(0, 0, 0); }
+  to   { transform: scale(1.18) translate3d(-2.5%, -2%, 0); }
+}
+.hero-pan {
+  transform-origin: center;
+  animation: heroPan 20s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+/* ── Brand-tinted gradient (legacy) ─────────────────────────────────── */
+.brand-gradient {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--brand-500) 12%, var(--surface-0)) 0%,
+    var(--surface-0) 60%);
+}
+
+/* ── Section divider ─────────────────────────────────────────────────── */
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--surface-200);
+}
+
+/* ── Badge ───────────────────────────────────────────────────────────── */
+.badge {
+  @apply inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full;
+  background: color-mix(in srgb, var(--brand-500) 12%, var(--surface-0));
+  color: var(--brand-700);
+}
+/* Price pill on service cards (the "From $125" priced variant). Mirrors the
+   badge: a soft brand tint in light mode. */
+.price-pill {
+  background: color-mix(in srgb, var(--brand-500) 12%, var(--surface-0));
+  color: var(--brand-700);
+}
+/* In dark mode the soft tint reads as dark brown — switch both the badge and the
+   price pill to the solid brand fill (same as the primary "Get a Free Quote"
+   button) with white text. */
+:root[data-theme='dark'] .badge,
+:root[data-theme='dark'] .price-pill {
+  background: var(--brand-500);
+  color: #fff;
+}
+
+.badge-accent {
+  @apply inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full;
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-0));
+  color: #92400e;
+}

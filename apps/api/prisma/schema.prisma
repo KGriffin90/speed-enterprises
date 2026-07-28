@@ -1,0 +1,1146 @@
+// Speed Enterprises — multi-tenant Prisma schema
+// PostgreSQL 15+. cuid() ids, timestamptz, soft-delete via deletedAt.
+//
+// Tenancy invariant: every business row carries `tenantId`. Identity rows
+// (User, RefreshToken, VerificationToken, PlatformAdmin) do not — they are
+// platform-level.
+//
+// Defense in depth: app-layer Prisma extension injects {tenantId} on every
+// query; Postgres RLS policies (created in a separate migration) enforce the
+// same boundary in the database. Either layer alone would catch a leak; both
+// together is the standard.
+
+generator client {
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native"]
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENUMS
+// ════════════════════════════════════════════════════════════════════════════
+
+enum Industry {
+  WINDOW_CLEANING
+  HVAC
+  PLUMBING
+  ELECTRICAL
+  LANDSCAPING
+  GENERAL_CONTRACTING
+  ROOFING
+  CLEANING
+  PAINTING
+  PEST_CONTROL
+  HANDYMAN
+  CONCRETE_ASPHALT
+  AUTO_DETAIL
+  POOL_SERVICE
+  APPLIANCE_REPAIR
+  SOLAR
+  GUTTERS
+  SIDING
+  GLASS
+  GARAGE_DOOR
+  FLOORING
+  CABINETS_COUNTERTOPS
+  FENCING
+  DECK_PATIO
+  LOCKSMITH
+  MOVING
+  JUNK_REMOVAL
+  SEPTIC
+  RADON
+  RESTORATION
+  INSULATION
+  CHIMNEY
+  WINDOW_TREATMENTS
+  SECURITY_SMART_HOME
+  EV_CHARGER
+  COMMERCIAL_MAINTENANCE
+  OTHER
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+  TRIAL
+}
+
+/// Provisioning state of a tenant's DEDICATED database (db-per-tenant mode).
+/// NONE in pool mode or before provisioning. Only READY tenants accept traffic.
+enum TenantDbStatus {
+  NONE
+  PROVISIONING
+  MIGRATING
+  READY
+  FAILED
+}
+
+enum PlanTier {
+  STARTER
+  GROWTH
+  PRO
+  ENTERPRISE
+}
+
+enum PlatformRole {
+  CUSTOMER
+  PLATFORM_ADMIN
+}
+
+enum TenantRole {
+  CUSTOMER
+  STAFF
+  OWNER
+}
+
+enum QuoteStatus {
+  NEW
+  REVIEWING
+  ESTIMATE_SENT
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  PAID
+  CANCELED
+}
+
+/// How the owner classifies a job after reviewing the request. Drives the
+/// scheduling experience: SIMPLE → propose self-book/short windows; COMPLEX →
+/// multi-day work that needs a coordinated plan + a note to the customer.
+enum JobComplexity {
+  SIMPLE
+  COMPLEX
+}
+
+enum PropertyKind {
+  RESIDENTIAL
+  COMMERCIAL
+}
+
+enum ServiceCategory {
+  RESIDENTIAL
+  COMMERCIAL
+  BOTH
+}
+
+enum PricingMode {
+  FIXED
+  QUOTE_REQUIRED
+  COMPUTED
+}
+
+enum MessageChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum EmailStatus {
+  QUEUED
+  PROCESSING // claimed by the outbox worker; prevents double-send
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  COMPLAINED
+  FAILED
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+  TENANT_INVITE
+  MAGIC_LOGIN
+  /// One-time SMS code proving a chat visitor controls the phone on a quote,
+  /// before the assistant reveals that quote's details.
+  QUOTE_LOOKUP
+}
+
+enum AuditAction {
+  TENANT_CREATED
+  TENANT_SUSPENDED
+  TENANT_REACTIVATED
+  TENANT_ARCHIVED
+  TENANT_CONFIG_UPDATED
+  MEMBER_INVITED
+  MEMBER_REMOVED
+  MEMBER_ROLE_CHANGED
+  QUOTE_CREATED
+  QUOTE_STATUS_CHANGED
+  QUOTE_DELETED
+  ESTIMATE_SENT
+  IMPERSONATION_STARTED
+  IMPERSONATION_ENDED
+  SERVICE_CREATED
+  SERVICE_UPDATED
+  SERVICE_DELETED
+  TEMPLATE_UPDATED
+  TIME_ENTRY_EDITED
+  PAY_RATE_UPDATED
+  APPOINTMENT_CREATED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELED
+  APPOINTMENT_RESCHEDULED
+}
+
+/// How the appointment was (or will be) booked.
+enum AppointmentMode {
+  /// Customer picks from a curated set of real open slots. Zero-touch for owner.
+  SELF_SERVE
+  /// Owner nominates 2–3 candidate windows; customer one-click confirms one.
+  PROPOSED
+}
+
+/// Lifecycle of a scheduled appointment.
+enum AppointmentStatus {
+  /// Owner has proposed slots; customer has not yet selected one.
+  PROPOSED
+  /// A specific time window is confirmed by the customer.
+  CONFIRMED
+  /// Work is done.
+  COMPLETED
+  /// Canceled by customer or owner before the job ran.
+  CANCELED
+  /// Superseded by a newer appointment (reschedule). Kept for history.
+  RESCHEDULED
+}
+
+enum PayType {
+  HOURLY
+  SALARY
+}
+
+enum TimeEntryStatus {
+  ACTIVE
+  COMPLETED
+  EDITED
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PLATFORM-LEVEL (no tenantId)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A person on the platform. Credentials + identity. NOT scoped to a tenant —
+/// access to a tenant's data comes from a TenantMembership row.
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  passwordHash    String?
+  googleId        String?      @unique
+  platformRole    PlatformRole @default(CUSTOMER)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  customerProfiles   CustomerProfile[]
+  memberships        TenantMembership[]
+  platformAdmin      PlatformAdmin?
+  refreshTokens      RefreshToken[]
+  verificationTokens VerificationToken[]
+  statusChanges      QuoteStatusHistory[] @relation("StatusChangedBy")
+  appointments       Appointment[]        @relation("CustomerAppointments")
+  auditLogs          AuditLog[]           @relation("AuditActor")
+  quoteRequests      QuoteRequest[]       @relation("CustomerQuotes")
+  legalAcceptances   LegalAcceptance[]
+
+  @@index([email])
+}
+
+/// Immutable audit trail of a user's acceptance of legal documents (Terms,
+/// Privacy Policy, EULA) at sign-up or on re-acceptance after a version change.
+/// One row per document accepted. Lives in the catalog (identity) database.
+model LegalAcceptance {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Which document was accepted: 'terms' | 'privacy' | 'eula'.
+  document   String
+  /// Version string of the document at the time of acceptance (e.g. '2026-06-13').
+  version    String
+  /// Captured for evidentiary purposes; may be null where unavailable.
+  ipAddress  String?
+  userAgent  String?
+  acceptedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([document, version])
+}
+
+model PlatformAdmin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName  String
+  title     String?
+  createdAt DateTime @default(now())
+}
+
+model RefreshToken {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash      String    @unique
+  /// Optional: which tenant this session was active in when the token was issued.
+  /// Lets us restore the user to the same tenant on refresh.
+  activeTenantId String?
+  userAgent      String?
+  ipAddress      String?
+  revokedAt      DateTime?
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  id        String       @id @default(cuid())
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Tenant context for invites (TENANT_INVITE purpose) — null for EMAIL_VERIFY/PASSWORD_RESET.
+  tenantId  String?
+  tenant    Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purpose   TokenPurpose
+  tokenHash String       @unique
+  otpCode   String? // argon2-hashed
+  payload   Json? // role on invite, etc.
+  email     String? // for invites where user doesn't exist yet
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime     @default(now())
+
+  @@index([userId, purpose])
+  @@index([tenantId])
+}
+
+/// Catalog of industry → service templates the new-tenant wizard clones.
+/// Platform-level, not tenant-scoped.
+model ServiceTemplate {
+  id                        String          @id @default(cuid())
+  industry                  Industry
+  name                      String
+  description               String          @db.Text
+  category                  ServiceCategory
+  iconKey                   String?
+  recommendedBasePriceCents Int             @default(0)
+  pricingMode               PricingMode
+  questions                 Json // Question[] from @speed-enterprises/shared
+  pricingRules              Json // PricingRule[]
+  lineItemKinds             String[]        @default([])
+  capabilities              String[]        @default([])
+  estimatedDurationMinutes  Int?
+  sortOrder                 Int             @default(0)
+  active                    Boolean         @default(true)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  @@index([industry, active])
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TENANT-LEVEL
+// ════════════════════════════════════════════════════════════════════════════
+
+model Tenant {
+  id           String       @id @default(cuid())
+  slug         String       @unique
+  customDomain String?      @unique
+  status       TenantStatus @default(TRIAL)
+  industry     Industry
+  planTier     PlanTier     @default(STARTER)
+  trialEndsAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  // ── Database-per-tenant control-plane fields ────────────────────────────────
+  // Populated by TenantProvisioningService when TENANCY_MODE=db-per-tenant.
+  // All nullable/defaulted so this is a backward-compatible migration and
+  // pool-mode deployments simply leave them empty.
+  //
+  // SECURITY: dbConnectionEnc is the AES-256-GCM-encrypted connection string for
+  // this tenant's dedicated database (see database/connection-secret.ts). It is
+  // NEVER stored or logged in plaintext and NEVER leaves the API process.
+  dbName          String?        @unique
+  dbHost          String?
+  dbConnectionEnc String?        @db.Text
+  dbStatus        TenantDbStatus @default(NONE)
+  dbProvisionedAt DateTime?
+
+  config             TenantConfig?
+  memberships        TenantMembership[]
+  customerProfiles   CustomerProfile[]
+  services           Service[]
+  automationTemplates AutomationTemplate[]
+  quoteRequests      QuoteRequest[]
+  uploadedImages     UploadedImage[]
+  statusHistory      QuoteStatusHistory[]
+  emailLogs          EmailLog[]
+  verificationTokens VerificationToken[]
+  auditLogs          AuditLog[]
+  timeEntries        TimeEntry[]
+  workRoutes         WorkRoute[]
+  routeTemplates     RouteTemplate[]
+  appointments       Appointment[]
+  slotHolds          SlotHold[]
+
+  @@index([status])
+  @@index([industry])
+}
+
+/// One row per tenant. Everything that doesn't fit into structured columns
+/// lives in JSONB. Shapes are enforced by @speed-enterprises/shared zod schemas
+/// at every write boundary. configVersion is bumped on every save and used
+/// for cache busting.
+model TenantConfig {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Identity (denormalized into the /config payload)
+  businessName String
+  legalName    String
+  tagline      String?
+  locale       String  @default("en-US")
+  currency     String  @default("USD")
+
+  // JSONB modules (validated by zod at the API boundary)
+  branding   Json // Branding
+  contact    Json // Contact
+  scheduling Json // Scheduling
+  automation Json // Automation
+  ai         Json // AI
+  payments   Json // Payments
+  features   Json // Features
+
+  configVersion Int      @default(1)
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+}
+
+model TenantMembership {
+  id          String     @id @default(cuid())
+  userId      String
+  tenantId    String
+  role        TenantRole
+  /// For STAFF/ADMIN/OWNER memberships only; populated by the tenant admin.
+  fullName    String?
+  title       String?
+  active      Boolean    @default(true)
+  invitedById String?
+  acceptedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeProfile EmployeeProfile?
+  timeEntries     TimeEntry[]
+  workRoutes      WorkRoute[]
+
+  @@unique([userId, tenantId])
+  @@index([tenantId, role])
+}
+
+/// One CustomerProfile per (user, tenant). Lets a person have different
+/// addresses with different businesses.
+model CustomerProfile {
+  id               String   @id @default(cuid())
+  userId           String
+  tenantId         String
+  fullName         String
+  phone            String
+  addressLine      String?
+  city             String?
+  state            String?
+  postalCode       String?
+  marketingConsent Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
+model Service {
+  id                       String          @id @default(cuid())
+  tenantId                 String
+  slug                     String
+  name                     String
+  category                 ServiceCategory
+  description              String          @db.Text
+  iconKey                  String?
+  active                   Boolean         @default(true)
+  visibleOnPublicSite      Boolean         @default(true)
+  basePriceCents           Int             @default(0)
+  pricingMode              PricingMode
+  /// Question[] — validated against QuestionSchema before write.
+  questions                Json
+  /// PricingRule[] — validated against PricingRuleSchema before write.
+  pricingRules             Json
+  /// LineItemKind[]
+  lineItemKinds            String[]        @default([])
+  /// CapabilityKey[]
+  capabilities             String[]        @default([])
+  estimatedDurationMinutes Int?
+  requiresOnsiteEstimate   Boolean         @default(false)
+  sortOrder                Int             @default(0)
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+  deletedAt                DateTime?
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quoteRequests QuoteRequest[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, active])
+  @@index([tenantId, category])
+}
+
+model AutomationTemplate {
+  id        String         @id @default(cuid())
+  tenantId  String
+  kind      String // MessageKind value
+  channel   MessageChannel
+  subject   String?
+  body      String         @db.Text
+  enabled   Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, kind, channel])
+  @@index([tenantId])
+}
+
+model QuoteRequest {
+  id           String       @id @default(cuid())
+  tenantId     String
+  /// Customer who owns the quote. Optional to support public/anonymous submissions
+  /// that get reconciled to a real user later.
+  userId       String?
+  serviceId    String
+  propertyKind PropertyKind
+  status       QuoteStatus  @default(NEW)
+  name         String?      @db.VarChar(160)
+
+  // Service address (denormalized; may differ from CustomerProfile address)
+  addressLine String
+  city        String
+  state       String
+  postalCode  String
+
+  // For anonymous public submissions
+  guestEmail String?
+  guestPhone String?
+  guestName  String?
+
+  customerNotes   String?   @db.Text
+  internalNotes   String?   @db.Text
+  preferredAtNote String?   @db.VarChar(500)
+  preferredAt     DateTime?
+
+  /// Owner's review of job size. Null until the owner classifies it. COMPLEX jobs
+  /// carry a complexityNote explaining the multi-day scope to the customer.
+  jobComplexity   JobComplexity?
+  complexityNote  String?   @db.Text
+
+  /// Map of questionId → answer. Validated at write against Service.questions.
+  answers          Json  @default("{}")
+  /// Free-form audit of computed pricing breakdown: rules applied, deltas, totals.
+  pricingBreakdown Json?
+
+  estimateAmountCents Int?
+  estimateSentAt      DateTime?
+  estimateValidUntil  DateTime?
+  acceptedAt          DateTime?
+  scheduledAt         DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  invoicedAt          DateTime?
+  paidAt              DateTime?
+  paymentProviderId   String?
+
+  source String? @default("web") // 'web' | 'mobile' | 'public_form' | 'phone' | 'import'
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User?                @relation("CustomerQuotes", fields: [userId], references: [id])
+  service       Service              @relation(fields: [serviceId], references: [id])
+  lineItems     QuoteLineItem[]
+  images        UploadedImage[]
+  statusHistory QuoteStatusHistory[]
+  emails        EmailLog[]
+  appointments  Appointment[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, userId])
+  @@index([tenantId, serviceId])
+  @@index([tenantId, propertyKind, status])
+}
+
+/// Generic, polymorphic quote line item. `kind` chooses the shape of `payload`.
+/// Examples by industry:
+///   - WINDOW_CLEANING: kind='window',     payload={ widthInches, heightInches, ... }
+///   - HVAC:            kind='unit',       payload={ unitType, brand, age, ... }
+///   - LANDSCAPING:     kind='sqft_zone',  payload={ sqft, surfaceType, ... }
+///   - PLUMBING:        kind='fixture',    payload={ fixtureType, location }
+model QuoteLineItem {
+  id             String @id @default(cuid())
+  tenantId       String
+  quoteRequestId String
+
+  kind           String // LineItemKind value
+  payload        Json // shape varies by kind; validated by LineItemPayloadSchemas
+  quantity       Int     @default(1)
+  unitPriceCents Int?
+  source         String? // 'camera' | 'manual' | 'ai_estimate' | 'import'
+  confidence     Float? // 0..1 when AI-estimated
+  isEstimated    Boolean @default(true)
+  label          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  quote  QuoteRequest    @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  images UploadedImage[]
+
+  @@index([tenantId, quoteRequestId])
+  @@index([tenantId, kind])
+}
+
+model UploadedImage {
+  id              String  @id @default(cuid())
+  tenantId        String
+  quoteRequestId  String?
+  quoteLineItemId String?
+
+  s3Key        String // tenants/<tenantId>/quotes/<quoteId>/<imageId>.<ext>
+  s3Bucket     String
+  mimeType     String
+  byteSize     Int
+  width        Int?
+  height       Int?
+  uploadedById String?
+
+  createdAt DateTime @default(now())
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quoteRequest  QuoteRequest?  @relation(fields: [quoteRequestId], references: [id], onDelete: SetNull)
+  quoteLineItem QuoteLineItem? @relation(fields: [quoteLineItemId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, quoteRequestId])
+  @@index([tenantId, quoteLineItemId])
+}
+
+model QuoteStatusHistory {
+  id             String      @id @default(cuid())
+  tenantId       String
+  quoteRequestId String
+  fromStatus     QuoteStatus
+  toStatus       QuoteStatus
+  changedById    String
+  note           String?     @db.Text
+  createdAt      DateTime    @default(now())
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quote     QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  changedBy User         @relation("StatusChangedBy", fields: [changedById], references: [id])
+
+  @@index([tenantId, quoteRequestId])
+}
+
+model EmailLog {
+  id                String         @id @default(cuid())
+  tenantId          String
+  kind              String // MessageKind value
+  channel           MessageChannel @default(EMAIL)
+  toEmail           String
+  fromEmail         String
+  subject           String
+  templateId        String
+  payload           Json
+  status            EmailStatus    @default(QUEUED)
+  providerMessageId String?        @unique
+  errorMessage      String?
+
+  // ── Transactional outbox: the EmailLog row IS the queue. A @nestjs/schedule
+  //    worker claims QUEUED rows, sends via Postmark, and records the result.
+  bodyHtml      String?   @db.Text // rendered at enqueue time
+  bodyText      String?   @db.Text
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? // backoff gate for retries
+  lastError     String?
+
+  quoteRequestId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quoteRequest QuoteRequest? @relation(fields: [quoteRequestId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([tenantId, toEmail])
+  @@index([tenantId, kind])
+  @@index([status, nextAttemptAt]) // outbox drain query
+}
+
+/// Platform-wide suppression list. An address that hard-bounces or files a spam
+/// complaint (via the Postmark webhook) is recorded here and skipped on every
+/// future send, across all tenants. Lives in the catalog DB; queried only with
+/// the catalog client even though the schema materializes the table everywhere.
+model EmailSuppression {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  reason    String // 'hard_bounce' | 'spam_complaint' | 'manual'
+  source    String // 'postmark_webhook' | 'manual' | ...
+  detail    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  /// Null for platform-wide events (e.g. tenant creation by platform admin).
+  tenantId    String?
+  actorUserId String?
+  action      AuditAction
+  /// Type+id of the affected entity, e.g. ("QuoteRequest", "abc123").
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor  User?   @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([actorUserId])
+  @@index([action])
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WORKFORCE
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Pay rate and vehicle info for STAFF/OWNER members.
+model EmployeeProfile {
+  id           String           @id @default(cuid())
+  membershipId String           @unique
+  membership   TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  basePayCents Int              @default(0) // hourly rate in cents (e.g. 1500 = $15.00/hr)
+  payType      PayType          @default(HOURLY)
+  avgMpg       Float            @default(25.0)
+  vehicleNotes String?
+  phone        String? // work contact number, collected when the admin adds the staff member
+  /// Embedded-payroll (Gusto) linkage. Opaque provider id only — the employee's
+  /// SSN + bank details are entered into the provider's hosted onboarding and
+  /// NEVER stored here. Null until the employee finishes payroll onboarding.
+  payrollEmployeeId  String?
+  payrollOnboardedAt DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+// ── Payroll (embedded provider: Gusto) ───────────────────────────────────────
+// The app NEVER stores SSN, bank, or tax data. Sensitive info is collected by the
+// provider's hosted onboarding and lives there; we keep only opaque provider ids
+// and computed amounts. Disbursement is performed by the provider, not the app.
+
+enum PayRunStatus {
+  DRAFT // built from timesheets; not yet sent to the provider
+  APPROVED // owner approved; queued to the payroll provider
+  PROCESSING // provider is running payroll / issuing deposits
+  PAID // direct deposits issued
+  FAILED
+  CANCELED
+}
+
+/// One per tenant: link to the embedded-payroll provider. Stores only the opaque
+/// provider company id — EIN, bank, and tax data live at the provider.
+model PayrollAccount {
+  id                String    @id @default(cuid())
+  tenantId          String    @unique
+  provider          String    @default("gusto")
+  providerCompanyId String?
+  onboardedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+/// A payroll run for a pay period. Hours come from TimeEntry; the actual money
+/// movement is done by the provider. We persist amounts + opaque provider refs.
+model PayRun {
+  id                String       @id @default(cuid())
+  tenantId          String
+  status            PayRunStatus @default(DRAFT)
+  periodStart       DateTime
+  periodEnd         DateTime
+  payDate           DateTime?
+  providerPayrollId String? // opaque id from the payroll provider
+  totalGrossCents   Int          @default(0)
+  createdById       String? // membershipId of the owner who created it
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  items PayRunItem[]
+
+  @@index([tenantId, periodStart])
+}
+
+/// Per-employee line in a PayRun. No PII — membership ref + computed amounts only.
+model PayRunItem {
+  id             String   @id @default(cuid())
+  payRunId       String
+  tenantId       String
+  membershipId   String
+  workedMinutes  Int      @default(0)
+  grossPayCents  Int      @default(0)
+  providerItemId String?
+  createdAt      DateTime @default(now())
+
+  payRun PayRun @relation(fields: [payRunId], references: [id], onDelete: Cascade)
+
+  @@index([payRunId])
+}
+
+/// One row per shift. Created at clock-in, clockedOutAt filled at clock-out.
+model TimeEntry {
+  id            String          @id @default(cuid())
+  tenantId      String
+  membershipId  String
+  clockedInAt   DateTime        @default(now())
+  clockedOutAt  DateTime?
+  breakMinutes  Int             @default(0)
+  notesByStaff  String?
+  notesByAdmin  String?
+  adminEditedAt DateTime?
+  adminEditorId String?
+  status        TimeEntryStatus @default(ACTIVE)
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  membership TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  workRoutes WorkRoute[]
+
+  @@index([tenantId, clockedInAt(sort: Desc)])
+  @@index([membershipId, clockedInAt(sort: Desc)])
+}
+
+/// A GPS tracking session tied to a shift.
+enum RouteStatus {
+  PLANNED // built by an owner, not yet started by the assigned staff
+  IN_PROGRESS // staff has started; live GPS + stop check-ins happening
+  COMPLETED // staff ended the route
+  CANCELED
+}
+
+enum RouteStopStatus {
+  PENDING // not yet reached
+  ARRIVED // staff is on site (arrivedAt set, departedAt not)
+  DONE // staff departed (both timestamps set)
+  SKIPPED
+}
+
+model WorkRoute {
+  id             String      @id @default(cuid())
+  tenantId       String
+  membershipId   String // the staff member this route belongs to / is assigned to
+  timeEntryId    String?
+  // Planned-route fields (owner builds the route, assigns it to a staff member,
+  // and the staff works it stop-by-stop). Legacy GPS-log routes created on
+  // clock-in default to IN_PROGRESS with no stops.
+  name           String?
+  status         RouteStatus @default(IN_PROGRESS)
+  plannedForDate DateTime?
+  assignedById   String? // membershipId of the owner who created the route
+  // Set when this route was generated from a saved route (template), manually or
+  // by the recurrence scheduler. Lets the scheduler dedupe: one route per
+  // (sourceTemplateId, plannedForDate) so a daily cron never double-books a day.
+  sourceTemplateId String?
+  startedAt      DateTime    @default(now())
+  endedAt        DateTime?
+  distanceMiles  Float?
+  gallonsUsed    Float?
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  membership TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  timeEntry  TimeEntry?       @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+  waypoints  RouteWaypoint[]
+  stops      RouteStop[]
+  assignees  RouteAssignee[]
+
+  @@index([tenantId, startedAt(sort: Desc)])
+  @@index([tenantId, status])
+  @@index([membershipId])
+  @@index([tenantId, sourceTemplateId, plannedForDate])
+}
+
+/// Crew assignment: a route can be assigned to multiple staff members. The
+/// route's `membershipId` is the primary assignee (kept for legacy GPS-log
+/// routes + mileage/gas-by-MPG); this table holds every assigned member,
+/// including the primary. Any assignee can start the route and check stops in.
+model RouteAssignee {
+  id           String   @id @default(cuid())
+  routeId      String
+  tenantId     String
+  membershipId String
+  createdAt    DateTime @default(now())
+
+  route WorkRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, membershipId])
+  @@index([tenantId, membershipId])
+  @@index([membershipId])
+}
+
+/// A planned checkpoint on a WorkRoute — a job site the staff visits in order.
+/// arrivedAt → departedAt gives time-on-site; the gap between one stop's
+/// departedAt and the next stop's arrivedAt is the drive time between jobs.
+model RouteStop {
+  id             String          @id @default(cuid())
+  routeId        String
+  tenantId       String
+  sequence       Int // 0-based order along the route
+  label          String
+  addressLine    String?
+  city           String?
+  state          String?
+  postalCode     String?
+  lat            Float?
+  lng            Float?
+  quoteRequestId String? // optional link to the job/quote this stop serves
+  status         RouteStopStatus @default(PENDING)
+  arrivedAt      DateTime?
+  departedAt     DateTime?
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  route WorkRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([routeId, sequence])
+  @@index([tenantId])
+}
+
+/// Individual GPS breadcrumb within a WorkRoute.
+model RouteWaypoint {
+  id         String   @id @default(cuid())
+  routeId    String
+  lat        Float
+  lng        Float
+  accuracy   Float?
+  speed      Float?
+  heading    Float?
+  altitude   Float?
+  recordedAt DateTime
+
+  route WorkRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([routeId, recordedAt])
+}
+
+/// A reusable, named route the owner saves once and clones into a working
+/// WorkRoute (assign staff + pick a date) every day or week. Templates carry only
+/// the stop list (addresses, pre-geocoded) — no assignee, date, or GPS timing.
+/// `recurrence` is the owner's intended cadence for the route (NONE = one-off);
+/// it labels the template's intent and can drive scheduled generation later.
+enum RouteRecurrence {
+  NONE
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+model RouteTemplate {
+  id          String              @id @default(cuid())
+  tenantId    String
+  name        String
+  recurrence  RouteRecurrence     @default(NONE)
+  // Anchor date for the recurrence: the first day the route should run. The
+  // cadence (weekday/day-of-month/interval) is derived from this date. Null
+  // until the owner sets a schedule; non-NONE recurrence won't auto-generate
+  // routes without it.
+  startDate   DateTime?
+  createdById String? // membershipId of the owner who saved it
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  tenant    Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stops     RouteTemplateStop[]
+  assignees RouteTemplateAssignee[]
+
+  @@index([tenantId, name])
+}
+
+/// Default crew for a saved route. When the route is run (manually or by the
+/// recurrence scheduler) these members become the new route's assignees.
+/// Mirrors RouteAssignee; tenantId is a plain column (cross-DB, no FK).
+model RouteTemplateAssignee {
+  id           String   @id @default(cuid())
+  templateId   String
+  tenantId     String
+  membershipId String
+  createdAt    DateTime @default(now())
+
+  template RouteTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, membershipId])
+  @@index([tenantId, membershipId])
+  @@index([membershipId])
+}
+
+/// An ordered stop within a RouteTemplate (mirrors RouteStop's address fields,
+/// minus the live status/arrival/departure timing).
+model RouteTemplateStop {
+  id             String  @id @default(cuid())
+  templateId     String
+  tenantId       String
+  sequence       Int // 0-based order along the route
+  label          String
+  addressLine    String?
+  city           String?
+  state          String?
+  postalCode     String?
+  lat            Float?
+  lng            Float?
+  quoteRequestId String?
+
+  template RouteTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId, sequence])
+}
+
+// ── Scheduling ───────────────────────────────────────────────────────────────
+
+/// A confirmed or proposed appointment linked to an accepted quote.
+///
+/// DOUBLE-BOOKING SAFETY
+/// ─────────────────────
+/// SlotHold (below) enforces @@unique([tenantId, startAt]) at the DB level, so
+/// two concurrent writers racing for the same slot will get a constraint error
+/// on the second INSERT — the application never has to rely on "check then
+/// write". Appointment records carry their own overlap query as defense-in-depth.
+///
+/// TIMEZONE HANDLING
+/// ─────────────────
+/// startAt/endAt are stored UTC. businessTimezone and customerTimezone are IANA
+/// zone names (e.g. "America/Denver"). All UIs must label the zone explicitly;
+/// never assume customer and business are in the same zone.
+///
+/// RESCHEDULE HISTORY
+/// ──────────────────
+/// Rescheduling creates a new Appointment with rescheduledFromId pointing at
+/// the old one (status → RESCHEDULED). The chain is fully traversable.
+model Appointment {
+  id             String  @id @default(cuid())
+  tenantId       String
+  quoteRequestId String
+  userId         String?
+
+  mode   AppointmentMode
+  status AppointmentStatus @default(CONFIRMED)
+
+  /// Confirmed window (UTC). Null until customer confirms in PROPOSED flow.
+  startAt DateTime?
+  endAt   DateTime?
+
+  /// Duration in minutes — copied from Service at booking time so reschedules
+  /// retain the original contracted scope even if the service changes later.
+  durationMinutes Int
+
+  /// IANA timezone strings stored with the appointment so reminders and
+  /// confirmation emails can show the right local time for each party.
+  businessTimezone String
+  customerTimezone String
+
+  /// SELF_SERVE: sent in the email that triggers the booking flow.
+  /// Expires after 24 h; single-use (deleted on confirm).
+  bookingToken String? @unique
+
+  /// Included in confirmation email; allows customer to reschedule themselves.
+  rescheduleToken String? @unique
+
+  /// Included in confirmation email; allows customer to cancel themselves.
+  cancelToken String? @unique
+
+  /// PROPOSED: up to 3 candidate windows the owner nominated.
+  /// Shape: Array<{ startAt: string; endAt: string; label: string }>
+  proposedSlots Json?
+
+  /// Rescheduling chain — points at the appointment this one replaced.
+  rescheduledFromId String?
+
+  canceledAt     DateTime?
+  canceledReason String?   @db.VarChar(500)
+  canceledBy     String? // 'customer' | 'owner'
+
+  confirmationSentAt    DateTime?
+  reminder24hSentAt     DateTime?
+  reminderMorningSentAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quoteRequest    QuoteRequest  @relation(fields: [quoteRequestId], references: [id])
+  user            User?         @relation("CustomerAppointments", fields: [userId], references: [id])
+  rescheduledFrom Appointment?  @relation("RescheduledChain", fields: [rescheduledFromId], references: [id])
+  rescheduledTo   Appointment[] @relation("RescheduledChain")
+
+  @@index([tenantId, status])
+  @@index([tenantId, startAt])
+  @@index([tenantId, quoteRequestId])
+  @@index([bookingToken])
+  @@index([rescheduleToken])
+  @@index([cancelToken])
+}
+
+/// Short-lived lock placed the moment a customer opens a slot for review.
+///
+/// The @@unique([tenantId, startAt]) constraint is the *atomic* guard against
+/// double-booking: two concurrent INSERTs for the same (tenant, startAt) tuple
+/// will produce a Prisma P2002 unique-constraint error on the second writer —
+/// there is no window between "check" and "write".
+///
+/// Holds are hard-deleted (not soft-deleted) when released so the unique index
+/// stays clean and the same slot can be re-held after expiry.
+model SlotHold {
+  id        String   @id @default(cuid())
+  tenantId  String
+  startAt   DateTime
+  endAt     DateTime
+  heldUntil DateTime
+  holdToken String   @unique
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Hard constraint: one active hold per (tenant, slot-start).
+  /// The application uses 10-minute TTL; a cron sweeps expired rows so slots
+  /// free automatically even when the browser tab is closed.
+  @@unique([tenantId, startAt])
+  @@index([heldUntil])
+}

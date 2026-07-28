@@ -1,0 +1,102 @@
+{
+  "expo": {
+    "name": "Speed Enterprises",
+    "slug": "speed-enterprises",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "speedenterprises",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "imageWidth": 200,
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.speedenterprises.app",
+      "icon": "./assets/icon.png",
+      "associatedDomains": [
+        "applinks:speedenterprises.app",
+        "applinks:*.speedenterprises.app"
+      ],
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Used to track your work route and mileage while clocked in.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Used to keep recording your work route and mileage while the app is in the background or your phone is locked.",
+        "UIBackgroundModes": ["location"],
+        "NSCameraUsageDescription": "Used to take photos of the job site for accurate quotes and to measure windows with AR.",
+        "NSPhotoLibraryUsageDescription": "Used to attach photos of the job site to your service quote request.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "package": "com.speedenterprises.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            { "scheme": "https", "host": "speedenterprises.app", "pathPrefix": "/book" },
+            { "scheme": "https", "host": "*.speedenterprises.app", "pathPrefix": "/book" }
+          ]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Used to measure window dimensions with AR for accurate quote requests.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#000000",
+            "image": "./assets/splash-icon.png"
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Used to attach photos of the job site to your service quote request.",
+          "cameraPermission": "Used to take photos of the job site for accurate quotes."
+        }
+      ],
+      ["expo-location", {
+        "locationWhenInUsePermission": "Used to track your work route and mileage while clocked in.",
+        "locationAlwaysAndWhenInUsePermission": "Used to keep recording your work route and mileage while the app is in the background or your phone is locked.",
+        "isAndroidBackgroundLocationEnabled": true,
+        "isAndroidForegroundServiceEnabled": true
+      }]
+    ],
+    "sdkVersion": "54.0.0",
+    "newArchEnabled": true,
+    "experiments": { "typedRoutes": true }
+  }
+}

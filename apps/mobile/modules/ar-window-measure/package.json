@@ -1,0 +1,7 @@
+{
+  "name": "ar-window-measure",
+  "version": "1.0.0",
+  "description": "ARKit-based window measurement module for Expo",
+  "main": "index.ts",
+  "private": true
+}

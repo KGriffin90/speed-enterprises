@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: speed-enterprises-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: speed_enterprises
+    # Host port 5433 → container 5432. Avoids collision with speed-enterprise
+    # (or any other local Postgres) on 5432. DATABASE_URL points at 5433.
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d speed_enterprises"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Mailhog for local email testing — point Resend fallback or any SMTP client here in dev
+  mail:
+    image: mailhog/mailhog:latest
+    container_name: speed-enterprises-mail
+    ports:
+      - "1026:1025"   # SMTP (host 1026 → container 1025, avoid mailhog collisions)
+      - "8026:8025"   # Web UI: http://localhost:8026
+
+volumes:
+  pgdata:
