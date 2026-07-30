@@ -13,6 +13,7 @@
       }
     },
     "preview": {
+      "_comment": "TODO: replace with your production API URL before release.",
       "distribution": "internal",
       "channel": "preview",
       "env": {
@@ -20,6 +21,7 @@
       }
     },
     "production": {
+      "_comment": "TODO: replace with your production API URL before release.",
       "autoIncrement": true,
       "channel": "production",
       "env": {
